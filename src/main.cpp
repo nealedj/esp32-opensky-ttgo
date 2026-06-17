@@ -10,6 +10,7 @@
 #include <flight_info.h>
 #include <aerodatabox.h>
 #include <time.h>
+#include <math.h>
 
 #include <ESPmDNS.h>
 #include <IotWebConf.h>
@@ -322,6 +323,41 @@ void setup()
     log_e("Timezone %s not found!", iotWebParamTimeZone.value());
 }
 
+// Small arrow pointing in the compass `heading` direction (degrees, 0 = North/up, clockwise).
+static lv_obj_t *create_heading_arrow(lv_obj_t *parent, int heading)
+{
+  constexpr int size = 22; // canvas is size x size px (~one text line tall)
+  // TRUE_COLOR_ALPHA so the arrow overlays cleanly on any background.
+  static uint8_t cbuf[LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(size, size)];
+
+  auto canvas = lv_canvas_create(parent);
+  lv_canvas_set_buffer(canvas, cbuf, size, size, LV_IMG_CF_TRUE_COLOR_ALPHA);
+  lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_TRANSP); // transparent
+
+  const float cx = size / 2.0f, cy = size / 2.0f;
+  const float rad = heading * (float)M_PI / 180.0f;
+  const float s = sinf(rad), c = cosf(rad);
+
+  // Local arrow coords, y-up: tip forward, two base corners behind centre.
+  const float local[3][2] = {{0.0f, 9.0f}, {-6.0f, -7.0f}, {6.0f, -7.0f}};
+  lv_point_t pts[3];
+  for (int i = 0; i < 3; i++)
+  {
+    const float x = local[i][0], y = local[i][1];
+    const float xr = x * c + y * s; // clockwise rotation from north
+    const float yr = -x * s + y * c;
+    pts[i].x = (lv_coord_t)lroundf(cx + xr);
+    pts[i].y = (lv_coord_t)lroundf(cy - yr); // flip to screen y-down
+  }
+
+  lv_draw_rect_dsc_t dsc;
+  lv_draw_rect_dsc_init(&dsc);
+  dsc.bg_color = lv_color_white();
+  dsc.bg_opa = LV_OPA_COVER;
+  lv_canvas_draw_polygon(canvas, pts, 3, &dsc);
+  return canvas;
+}
+
 void display_flight(std::list<flight_info>::const_iterator it)
 {
   const flight_info &flight_info = *it;
@@ -416,6 +452,10 @@ void display_flight(std::list<flight_info>::const_iterator it)
   auto label_heading = lv_label_create(lv_scr_act());
   lv_label_set_text(label_heading, heading.c_str());
   lv_obj_align(label_heading, LV_ALIGN_TOP_RIGHT, -45, 56);
+
+  // Visual compass arrow pointing in the direction of travel, just left of the degrees text
+  auto arrow = create_heading_arrow(lv_scr_act(), flight_info.heading);
+  lv_obj_align_to(arrow, label_heading, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 
   // LINE 5 - 72
 
