@@ -619,6 +619,20 @@ void display_network_state(iotwebconf::NetworkState state)
   }
 }
 
+void handle_top_button()
+{
+  static int last_state = HIGH;
+  static unsigned long last_change = 0;
+  int state = digitalRead(GPIO_BUTTON_TOP);
+  if (state != last_state && millis() - last_change > 50)
+  {
+    last_change = millis();
+    last_state = state;
+    if (state == LOW)
+      next_update = 0ul;
+  }
+}
+
 void display_flights()
 {
   auto now = millis();
@@ -713,6 +727,7 @@ void loop()
     break;
 
   case iotwebconf::NetworkState::OnLine:
+    handle_top_button();
     display_flights();
     break;
   }
