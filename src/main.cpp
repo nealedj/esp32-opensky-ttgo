@@ -17,6 +17,7 @@
 #include <IotWebConfTParameter.h>
 
 #include <moustache.h>
+#include <geo.h>
 #include <format_gps.h>
 #include <format_number.h>
 #include <format_duration.h>
@@ -446,6 +447,16 @@ void display_flight(std::list<flight_info>::const_iterator it)
   auto label_latlon = lv_label_create(lv_scr_act());
   lv_label_set_text(label_latlon, latlon.c_str());
   lv_obj_align(label_latlon, LV_ALIGN_TOP_LEFT, 0, 56);
+
+  // Distance from home to aircraft
+  double dist_km = haversine_km(iotWebParamLatitude.value(), iotWebParamLongitude.value(),
+                                flight_info.latitude, flight_info.longitude);
+  auto distance = iotWebParamMetric.value()
+                      ? String(dist_km, 1) + "km"
+                      : String(dist_km * KM_TO_MI, 1) + "mi";
+  auto label_distance = lv_label_create(lv_scr_act());
+  lv_label_set_text(label_distance, distance.c_str());
+  lv_obj_align_to(label_distance, label_latlon, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
 
   // Heading \u00b0 = degrees
   auto heading = format_zero_padding(flight_info.heading, 3) + "\u00b0";
