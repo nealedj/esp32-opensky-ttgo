@@ -49,4 +49,7 @@ struct flight_info
     const airport_t *destination_airport() const { return iata_destination_airport.isEmpty() ? nullptr : lookup_airport(iata_destination_airport.c_str()); }
 };
 
+// Call once (and again if credentials change) before the first get_flights().
+extern void flights_configure(const char *client_id, const char *client_secret);
+
 extern bool get_flights(float latitude, float longitude, float range_latitude, float range_longitude, bool air, bool ground, bool gliders, bool vehicles, std::list<flight_info> &flights, String &error_message);

@@ -5,7 +5,7 @@
 
 #define WIFI_SSID "FlightRadar"
 #define WIFI_PASSWORD nullptr
-#define CONFIG_VERSION "1.5"
+#define CONFIG_VERSION "1.6"
 
 // One degree is 110.567 km (69.091 miles)
 
@@ -86,6 +86,13 @@
 // By default take a 5mile range
 //#define DEFAULT_RANGE_LATITUDE 0.05
 //#define DEFAULT_RANGE_LONGITUDE 0.05
+
+// OpenSky Network credentials (obtain from opensky-network.org -> Account -> API clients)
+#define DEFAULT_OPENSKY_CLIENT_ID     ""
+#define DEFAULT_OPENSKY_CLIENT_SECRET ""
+
+// AeroDataBox RapidAPI key (rapidapi.com/aedbx-aedbx/api/aerodatabox) for route + aircraft enrichment
+#define DEFAULT_AERODATABOX_KEY ""
 
 // Refresh screen every 10 seconds
 constexpr auto flight_milliseconds = 10 * 1000ul;

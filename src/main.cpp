@@ -8,6 +8,7 @@
 #include <lvgl.h>
 
 #include <flight_info.h>
+#include <aerodatabox.h>
 #include <time.h>
 
 #include <ESPmDNS.h>
@@ -47,15 +48,18 @@ auto iotWebParamAirborne = iotwebconf::Builder<iotwebconf::CheckboxTParameter>("
 auto iotWebParamGrounded = iotwebconf::Builder<iotwebconf::CheckboxTParameter>("ground").label("Include grounded").defaultValue(DEFAULT_GROUND).build();
 auto iotWebParamGliders = iotwebconf::Builder<iotwebconf::CheckboxTParameter>("gliders").label("Include gliders").defaultValue(DEFAULT_GLIDERS).build();
 auto iotWebParamVehicles = iotwebconf::Builder<iotwebconf::CheckboxTParameter>("vehicles").label("Include vehicles").defaultValue(DEFAULT_VEHICLES).build();
-auto iotWebParamTimeZone = iotwebconf::Builder<iotwebconf::SelectTParameter<sizeof(posix_timezone_tz_t)>>("timezone").label("Choose timezone").optionValues(posix_timezone_tzs->zone_name).optionNames(posix_timezone_tzs->zone_name).optionCount(sizeof(posix_timezone_tzs) / sizeof(posix_timezone_tzs[0])).nameLength(sizeof(timezone_name)).defaultValue(DEFAULT_TIMEZONE).build();
+auto iotWebParamTimeZone = iotwebconf::Builder<iotwebconf::SelectTParameter<sizeof(posix_timezone_tz_t)>>("timezone").label("Choose timezone").optionValues(posix_timezone_tzs->zone_name).optionNames(posix_timezone_tzs->zone_name).optionCount(sizeof(posix_timezone_tzs) / sizeof(posix_timezone_tzs[0])).nameLength(sizeof(posix_timezone_tz_t)).defaultValue(DEFAULT_TIMEZONE).build();
 auto iotWebParamMetric = iotwebconf::Builder<iotwebconf::CheckboxTParameter>("metric").label("Use metric units").defaultValue(DEFAULT_METRIC).build();
+auto iotWebParamOpenskyClientId     = iotwebconf::Builder<iotwebconf::TextTParameter<64>>("osky_id").label("OpenSky Client ID").defaultValue(DEFAULT_OPENSKY_CLIENT_ID).build();
+auto iotWebParamOpenskyClientSecret = iotwebconf::Builder<iotwebconf::TextTParameter<64>>("osky_sec").label("OpenSky Client Secret").defaultValue(DEFAULT_OPENSKY_CLIENT_SECRET).build();
+auto iotWebParamAerodataboxKey      = iotwebconf::Builder<iotwebconf::TextTParameter<80>>("adb_key").label("AeroDataBox RapidAPI Key").defaultValue(DEFAULT_AERODATABOX_KEY).build();
 
 // Variables for flight info
 unsigned long next_update;
 // List of flights
 std::list<flight_info> flights;
-// Flight to display
-std::list<flight_info>::const_iterator it = flights.cbegin();
+// Flight to display (mutable so it can be enriched in place before rendering)
+std::list<flight_info>::iterator it = flights.begin();
 
 void send_content_gzip(const unsigned char *content, size_t length, const char *mime_type)
 {
@@ -96,6 +100,9 @@ void update_runtime_config()
   }
   else
     log_e("Timezone %s not found!", iotWebParamTimeZone.value());
+
+  flights_configure(iotWebParamOpenskyClientId.value(), iotWebParamOpenskyClientSecret.value());
+  aerodatabox_configure(iotWebParamAerodataboxKey.value());
 }
 
 void handleRoot()
@@ -270,6 +277,9 @@ void setup()
   param_group.addItem(&iotWebParamVehicles);
   param_group.addItem(&iotWebParamTimeZone);
   param_group.addItem(&iotWebParamMetric);
+  param_group.addItem(&iotWebParamOpenskyClientId);
+  param_group.addItem(&iotWebParamOpenskyClientSecret);
+  param_group.addItem(&iotWebParamAerodataboxKey);
   iotWebConf.addParameterGroup(&param_group);
 
   iotWebConf.getApTimeoutParameter()->visible = true;
@@ -278,6 +288,10 @@ void setup()
   iotWebConf.setConfigPin(GPIO_BUTTON_TOP);
 
   iotWebConf.init();
+
+  // Apply OpenSky credentials from whatever was loaded from NVS.
+  flights_configure(iotWebParamOpenskyClientId.value(), iotWebParamOpenskyClientSecret.value());
+  aerodatabox_configure(iotWebParamAerodataboxKey.value());
 
   // Set up required URL handlers on the web server.
   server.on("/", HTTP_GET, handleRoot);
@@ -561,7 +575,7 @@ void display_flights()
   {
     lv_obj_clean(lv_scr_act());
 
-    if (it == flights.cend())
+    if (it == flights.end())
     {
       log_i("Updating flights");
       String error_message;
@@ -609,8 +623,14 @@ void display_flights()
         return;
       }
 
-      it = flights.cbegin();
+      it = flights.begin();
     }
+
+    // Enrich just the flight about to be shown (route + aircraft), best-effort.
+    // Lazy + cached so we only ever spend one AeroDataBox call per displayed callsign.
+    String enrich_error;
+    if (!enrich_flight(*it, enrich_error) && !enrich_error.isEmpty())
+      log_w("Enrichment failed for %s: %s", it->call_sign.c_str(), enrich_error.c_str());
 
     display_flight(it++);
 

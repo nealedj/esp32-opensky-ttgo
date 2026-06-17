@@ -1,6 +1,9 @@
-# FlightRadar24-TTGO
+# OpenSky-TTGO
 
-[![Platform IO CI](https://github.com/rzeldent/esp32-flightradar24-ttgo/actions/workflows/main.yml/badge.svg)](https://github.com/rzeldent/esp32-flightradar24-ttgo/actions/workflows/main.yml)
+[![Platform IO CI](https://github.com/nealedj/esp32-opensky-ttgo/actions/workflows/main.yml/badge.svg)](https://github.com/nealedj/esp32-opensky-ttgo/actions/workflows/main.yml)
+
+> [!NOTE]
+> Forked from https://github.com/rzeldent/esp32-flightradar24-ttgo to switch out FlightRadar24 in favour of OpenSky and AeroDataBox
 
 Real-time flights display. No login or account required.
 Easy configuration through the web interface.
