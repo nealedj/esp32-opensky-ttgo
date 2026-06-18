@@ -10,12 +10,14 @@
 #include <flight_info.h>
 #include <aerodatabox.h>
 #include <time.h>
+#include <math.h>
 
 #include <ESPmDNS.h>
 #include <IotWebConf.h>
 #include <IotWebConfTParameter.h>
 
 #include <moustache.h>
+#include <geo.h>
 #include <format_gps.h>
 #include <format_number.h>
 #include <format_duration.h>
@@ -322,6 +324,86 @@ void setup()
     log_e("Timezone %s not found!", iotWebParamTimeZone.value());
 }
 
+// Helper: rotate a local (x, y-up) point by `angle_deg` clockwise from north and map to screen coords.
+static lv_point_t rotate_point(float x, float y, float s, float c, float cx, float cy)
+{
+  const float xr = x * c + y * s;
+  const float yr = -x * s + y * c;
+  return {(lv_coord_t)lroundf(cx + xr), (lv_coord_t)lroundf(cy - yr)};
+}
+
+// Compass arrow canvas. filled=true → solid white triangle (aircraft heading).
+//                        filled=false → yellow needle with small arrowhead (direction to aircraft).
+// Each call uses its own static buffer so the two arrows don't alias each other.
+static lv_obj_t *create_heading_arrow(lv_obj_t *parent, int angle_deg)
+{
+  constexpr int size = 22;
+  static uint8_t cbuf[LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(size, size)];
+
+  auto canvas = lv_canvas_create(parent);
+  lv_canvas_set_buffer(canvas, cbuf, size, size, LV_IMG_CF_TRUE_COLOR_ALPHA);
+  lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_TRANSP);
+
+  const float cx = size / 2.0f, cy = size / 2.0f;
+  const float rad = angle_deg * (float)M_PI / 180.0f;
+  const float s = sinf(rad), c = cosf(rad);
+
+  // Local arrow coords, y-up: tip forward, two base corners behind centre.
+  const float local[3][2] = {{0.0f, 9.0f}, {-6.0f, -7.0f}, {6.0f, -7.0f}};
+  lv_point_t pts[3];
+  for (int i = 0; i < 3; i++)
+    pts[i] = rotate_point(local[i][0], local[i][1], s, c, cx, cy);
+
+  lv_draw_rect_dsc_t dsc;
+  lv_draw_rect_dsc_init(&dsc);
+  dsc.bg_color = lv_color_white();
+  dsc.bg_opa = LV_OPA_COVER;
+  lv_canvas_draw_polygon(canvas, pts, 3, &dsc);
+  return canvas;
+}
+
+static lv_obj_t *create_direction_needle(lv_obj_t *parent, int angle_deg)
+{
+  constexpr int size = 22;
+  static uint8_t cbuf[LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(size, size)];
+
+  auto canvas = lv_canvas_create(parent);
+  lv_canvas_set_buffer(canvas, cbuf, size, size, LV_IMG_CF_TRUE_COLOR_ALPHA);
+  lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_TRANSP);
+
+  const float cx = size / 2.0f, cy = size / 2.0f;
+  const float rad = angle_deg * (float)M_PI / 180.0f;
+  const float s = sinf(rad), c = cosf(rad);
+
+  const lv_color_t yellow = lv_palette_main(LV_PALETTE_YELLOW);
+
+  // Shaft: from tail (-8 behind centre) to just before tip (6 forward).
+  lv_draw_line_dsc_t line_dsc;
+  lv_draw_line_dsc_init(&line_dsc);
+  line_dsc.color = yellow;
+  line_dsc.width = 2;
+  line_dsc.opa = LV_OPA_COVER;
+  lv_point_t shaft[2] = {
+      rotate_point(0.0f, -8.0f, s, c, cx, cy),
+      rotate_point(0.0f, 5.0f, s, c, cx, cy),
+  };
+  lv_canvas_draw_line(canvas, shaft, 2, &line_dsc);
+
+  // Small arrowhead triangle at the tip.
+  const float local_head[3][2] = {{0.0f, 9.0f}, {-4.0f, 4.0f}, {4.0f, 4.0f}};
+  lv_point_t head[3];
+  for (int i = 0; i < 3; i++)
+    head[i] = rotate_point(local_head[i][0], local_head[i][1], s, c, cx, cy);
+
+  lv_draw_rect_dsc_t fill_dsc;
+  lv_draw_rect_dsc_init(&fill_dsc);
+  fill_dsc.bg_color = yellow;
+  fill_dsc.bg_opa = LV_OPA_COVER;
+  lv_canvas_draw_polygon(canvas, head, 3, &fill_dsc);
+
+  return canvas;
+}
+
 void display_flight(std::list<flight_info>::const_iterator it)
 {
   const flight_info &flight_info = *it;
@@ -405,17 +487,30 @@ void display_flight(std::list<flight_info>::const_iterator it)
 
   // LINE 4 - 56
 
-  // Lat Lon
-  auto latlon = format_gps_location(flight_info.latitude, flight_info.longitude);
-  auto label_latlon = lv_label_create(lv_scr_act());
-  lv_label_set_text(label_latlon, latlon.c_str());
-  lv_obj_align(label_latlon, LV_ALIGN_TOP_LEFT, 0, 56);
+  // Direction from home to aircraft (yellow needle) + distance
+  double dist_km = haversine_km(iotWebParamLatitude.value(), iotWebParamLongitude.value(),
+                                flight_info.latitude, flight_info.longitude);
+  double bearing = initial_bearing_deg(iotWebParamLatitude.value(), iotWebParamLongitude.value(),
+                                       flight_info.latitude, flight_info.longitude);
+  auto dir_needle = create_direction_needle(lv_scr_act(), (int)lround(bearing));
+  lv_obj_align(dir_needle, LV_ALIGN_TOP_LEFT, 0, 56);
+
+  auto distance = iotWebParamMetric.value()
+                      ? String(dist_km, 1) + "km"
+                      : String(dist_km * KM_TO_MI, 1) + "mi";
+  auto label_distance = lv_label_create(lv_scr_act());
+  lv_label_set_text(label_distance, distance.c_str());
+  lv_obj_align_to(label_distance, dir_needle, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
 
   // Heading \u00b0 = degrees
   auto heading = format_zero_padding(flight_info.heading, 3) + "\u00b0";
   auto label_heading = lv_label_create(lv_scr_act());
   lv_label_set_text(label_heading, heading.c_str());
   lv_obj_align(label_heading, LV_ALIGN_TOP_RIGHT, -45, 56);
+
+  // Solid white triangle pointing in the direction of travel, just left of the degrees text
+  auto arrow = create_heading_arrow(lv_scr_act(), flight_info.heading);
+  lv_obj_align_to(arrow, label_heading, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 
   // LINE 5 - 72
 
@@ -568,6 +663,20 @@ void display_network_state(iotwebconf::NetworkState state)
   }
 }
 
+void handle_top_button()
+{
+  static int last_state = HIGH;
+  static unsigned long last_change = 0;
+  int state = digitalRead(GPIO_BUTTON_TOP);
+  if (state != last_state && millis() - last_change > 50)
+  {
+    last_change = millis();
+    last_state = state;
+    if (state == LOW)
+      next_update = 0ul;
+  }
+}
+
 void display_flights()
 {
   auto now = millis();
@@ -662,6 +771,7 @@ void loop()
     break;
 
   case iotwebconf::NetworkState::OnLine:
+    handle_top_button();
     display_flights();
     break;
   }
